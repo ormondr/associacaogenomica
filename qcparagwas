@@ -1,0 +1,102 @@
+ #Script para controle de qualidade de dados de genotipagem.
+#PLINK v2.00a4 64-bit (9 Jan 2023) ##principal utilizado
+#PLINK v1.90b7 64-bit (16 Jan 2023)
+#por Rafaella Ormond, adaptado da Jessica Mauer
+
+#OPCIONAL: Adicionar fenótipo (para datasets em que a última coluna do .fam estiver -9, ou missing): em que phenotype_arq.txt é um arquivo texto com o FID, ID da amostra e fenótipo em 3 colunas respectivamente
+
+plink2 --bfile arq_genotype --pheno phenotype_arq.txt --pheno-merge --make-bed --out arq_phenotype
+
+#OPCIONAL Arrumar Family ID (caso o FID no .fam esteja diferente p/ cada indivíduo. o certo é ser 0 para todos) 
+awk '{print $1, $2, $3, $2}' arq_phenotype.fam > upd_fam.txt
+
+#conferir se a terceira coluna no upd_fam.txt é toda 0 e os ids na segunda e quarta coluna estão iguais, em seguida:
+plink2 --bfile arq_phenotype --update-ids upd_fam.txt --make-bed --out arq_phenotype_fid
+
+#1) Remover indels e SNPs com mais de dois alelos
+
+plink2 --bfile arq_phenotype_fid --snps-only just-acgt --make-bed --out arq_semindels
+#caso não funcione, substituir just-acgt por no-DI, mas isso é um sinal de que a versão do plink está desatualizada
+
+#2) Filtros
+
+#filtrar MAF (frequência do menor alelo), GENO (taxa de SNPs n genotipados) e HWE (eq. Hardy-Weinberg)
+plink2 --bfile arq_semindels --maf 0.01 --geno 0.1 --hwe 0.000001 --make-bed --out arq_genotype_QC
+plink2 --bfile arq_genotype_QC --mind 0.1 --make-bed --out arq_genotype_QC_mind
+
+#3) Sex-check
+##essa parte eu faço com plink1.9 (chamando por "plink" pq nao achei as flags correspondentes no plink2)
+#Separar a parte homóloga XY (baseado no hg 19 que é o pedido pelo Sanger Imputation)
+plink --bfile arq_genotype_QC --split-x b37 --make-bed --out arq_genotype_split
+
+#comentario teste
+
+### OBS: se o plink não deixar porque já existe uma região ‘XY’, fazer
+plink --bfile arq_genotype_QC --merge-x --make-bed --out arq_genotype_merge
+plink --bfile arq_genotype_merge --split-x b37 --make-bed --out arq_genotype_split
+
+#sexcheck de fato
+plink --bfile arq_genotype_split --check-sex --out arq_sexcheck
+
+#ver o no. de PROBLEM no arquivo .sexcheck
+#Abrir os outputs no R e plotar gráfico F statistic por sex label (dotchart(banco$F)). Se quase todos os pontos masculinos estiverem agrupados à direita e os femininos mais separados à esquerda, está correta a distribuicao.
+#OBS: para o conjunto de dados tept não excluí nenhum indivíduo pois deram apenas 3 indivíduos discordantes e a distribuição pelo gráfico estava adequada (indivíduos femininos discordantes estavam próximo do threshold 0.2)
+
+#4) Remover cromossomos indesejados (0: unknown, 23: X, 24: Y, 25: XY homóloga, 26: mitocondrial)
+plink2 --bfile arq_genotype_QC_mind --not-chr 0,23-26 --make-bed --keep-allele-order --out arq_genotype_QC_semXY
+
+#5)Excluir indivíduos outliers heterozigotos (heterozigosidade >3 desvios padrão) e indivíduos que não estão genotipados >3% dos SNPS
+plink2 --bfile arq_genotype_QC_semXY --missing --out indiv_missing
+plink2 --bfile arq_genotype_QC_semXY --het --out hetero
+
+# R:
+#importar dados
+imiss <- read.table('indiv_missing.imiss',h=T)
+het <- read.table('hetero.het',h=T)
+het$P_HET <- (het$N.NM. - het$O.HOM.) / het$N.NM.
+upper_3sd <- mean(het$P_HET) + 3*sd(het$P_HET)
+lower_3sd <- mean(het$P_HET) - 3*sd(het$P_HET)
+
+#grafico
+
+pdf('imiss-vs-het.pdf')
+plot(log10(imiss$F_MISS),het$P_HET,xlab='log10(Proportion of missing genotypes)',ylab='Proportion Heterozygous',xlim=c(-4,0),ylim=c(0,0.5))
+axis(side=1,labels=F)
+mtext(xlabels,side=1,at=c(-4,-3,-2,-1,0),line=1)
+abline(h=upper_3sd,col='red',lty=2)
+abline(h=lower_3sd,col='red',lty=2)
+abline(v=log10(0.03),col='red',lty=2)
+dev.off()
+
+##Criar lista de indivíduos para remover
+imiss_rem <- subset(imiss,imiss$F_MISS > 0.03)[,1:2]
+het_rem <- subset(het,het$P_HET > upper_3sd | het$P_HET < lower_3sd)[,1:2]
+indiv_rem <- rbind(imiss_rem,het_rem)
+write.table(indiv_rem,'fail-imisshet-qc.txt',col=F,row=F,quo=F,sep='\t')
+
+#Removendo indivíduos outliers. linha de comando: 
+plink2 --bfile arq_genotype_QC_semXY --remove fail-imisshet-qc.txt --make-bed --out arq_semhet
+
+#6) KING CUTOFF: Remover indivíduos relacionados (semelhante ao IBD) #gera o arquivo .king.cutoff.in.id com os individuos nao relacionados e o arquivo .king.cutoff.out.id com os ind excluíduos nesse filtro
+#com isso eu uso a lista dos indivíduos que permanecram pra dar um keep
+#para excluir individuos de segundo grau o parametro é o que eu uso abaixo
+
+plink2 --bfile aula_semXY --king-cutoff 0.0884 --out indiv_king
+
+#deixar apenas os indivíduos sem compartilhamento genético
+plink2 --bfile arq_semhet --keep ind_king.king.cutoff.in.id --make-bed --out arq_QC_king
+
+#7) PCA
+plink2 --bfile arq_QC_king --pca --out arq_QC_pca 
+
+#8) Plot PCA
+
+#No RStudio:
+dados_pca <-  read.table( "arq_QC_pca.eigenvec" )
+colnames(dados_pca)[3:7] = c( "PC1","PC2","PC3","PC4","PC5" )
+plot( dados_pca[,3], dados_pca[,4], xlab = "PC1", ylab = "PC2" )
+pairs(dados_pca[, 3:7])
+
+# pelo ggplot2 
+library(ggplot2)
+ggplot(data=dados_pca, aes(x=dados_pca$PC1, y=dados_pca$PC2)) + geom_point(shape=19, alpha=0.4, size=3)
