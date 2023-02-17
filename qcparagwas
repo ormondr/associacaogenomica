@@ -40,7 +40,7 @@ plink --bfile arq_genotype_split --check-sex --out arq_sexcheck
 
 #ver o no. de PROBLEM no arquivo .sexcheck
 #Abrir os outputs no R e plotar gráfico F statistic por sex label (dotchart(banco$F)). Se quase todos os pontos masculinos estiverem agrupados à direita e os femininos mais separados à esquerda, está correta a distribuicao.
-#OBS: para o conjunto de dados tept não excluí nenhum indivíduo pois deram apenas 3 indivíduos discordantes e a distribuição pelo gráfico estava adequada (indivíduos femininos discordantes estavam próximo do threshold 0.2)
+#OBS: para o conjunto de dados BHRC não excluí nenhum indivíduo pois deram apenas 5 indivíduos discordantes e a distribuição pelo gráfico estava adequada (indivíduos femininos discordantes estavam próximo do threshold 0.2)
 
 #4) Remover cromossomos indesejados (0: unknown, 23: X, 24: Y, 25: XY homóloga, 26: mitocondrial)
 plink2 --bfile arq_genotype_QC_mind --not-chr 0,23-26 --make-bed --keep-allele-order --out arq_genotype_QC_semXY
