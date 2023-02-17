@@ -51,37 +51,45 @@ plink2 --bfile arq_genotype_QC_semXY --het --out hetero
 
 # R:
 #importar dados
-imiss <- read.table('indiv_missing.imiss',h=T)
-het <- read.table('hetero.het',h=T)
-het$P_HET <- (het$N.NM. - het$O.HOM.) / het$N.NM.
-upper_3sd <- mean(het$P_HET) + 3*sd(het$P_HET)
-lower_3sd <- mean(het$P_HET) - 3*sd(het$P_HET)
+##aqui nao estava indo com o cabeçalho então chamei sem e depois renomeei
+####eu substitui os parametros que estavam no script da jess, mas era bom conferir se está certo
+
+smiss <- read.table('ind_missing.smiss')
+het <- read.table('hetero.het')
+colnames(smiss) <- c('FID', 'IID', 'MISSING_CT',	'OBS_CT', 'F_MISS')
+colnames(het) <- c('FID', 'IID', 'O_HOM', 'E_HOM', 'OBS_CT', 'F')
+
+het$E_HOM <- (het$OBS_CT - het$O_HOM) / het$OBS_CT
+upper_3sd <- mean(het$E_HOM) + 3*sd(het$E_HOM)
+lower_3sd <- mean(het$E_HOM) - 3*sd(het$E_HOM)
 
 #grafico
-
-pdf('imiss-vs-het.pdf')
-plot(log10(imiss$F_MISS),het$P_HET,xlab='log10(Proportion of missing genotypes)',ylab='Proportion Heterozygous',xlim=c(-4,0),ylim=c(0,0.5))
-axis(side=1,labels=F)
-mtext(xlabels,side=1,at=c(-4,-3,-2,-1,0),line=1)
-abline(h=upper_3sd,col='red',lty=2)
-abline(h=lower_3sd,col='red',lty=2)
-abline(v=log10(0.03),col='red',lty=2)
-dev.off()
+##eu nao consegui gerar esse grafico de visualizacao entao eu só filtrei sem ele
+pdf('smiss-vs-het.pdf') 
+plot(log10(smiss$F_MISS),het$E_HOM,xlab='log10(Proportion of missing genotypes)',ylab='Proportion Heterozygous',xlim=c(-4,0),ylim=c(0,0.5)) 
+axis(side=1,labels=F) 
+#mtext(xlabels,side=1,at=c(-4,-3,-2,-1,0),line=1) 
+abline(h=upper_3sd,col='red',lty=2) 
+abline(h=lower_3sd,col='red',lty=2) 
+abline(v=log10(0.03),col='red',lty=2) 
+dev.off() 
+####
 
 ##Criar lista de indivíduos para remover
-imiss_rem <- subset(imiss,imiss$F_MISS > 0.03)[,1:2]
-het_rem <- subset(het,het$P_HET > upper_3sd | het$P_HET < lower_3sd)[,1:2]
-indiv_rem <- rbind(imiss_rem,het_rem)
-write.table(indiv_rem,'fail-imisshet-qc.txt',col=F,row=F,quo=F,sep='\t')
+smiss_rem <- subset(smiss,smiss$F_MISS > 0.03)[,1:2]
+het_rem <- subset(het,het$E_HOM > upper_3sd | het$E_HOM < lower_3sd)[,1:2]
+indiv_rem <- rbind(smiss_rem,het_rem)
+write.table(indiv_rem,'fail-smisshet-qc.txt',col=F,row=F,quo=F,sep='\t')
+
 
 #Removendo indivíduos outliers. linha de comando: 
-plink2 --bfile arq_genotype_QC_semXY --remove fail-imisshet-qc.txt --make-bed --out arq_semhet
+plink2 --bfile arq_genotype_QC_semXY --remove fail-smisshet-qc.txt --make-bed --out arq_semhet
 
 #6) KING CUTOFF: Remover indivíduos relacionados (semelhante ao IBD) #gera o arquivo .king.cutoff.in.id com os individuos nao relacionados e o arquivo .king.cutoff.out.id com os ind excluíduos nesse filtro
 #com isso eu uso a lista dos indivíduos que permanecram pra dar um keep
 #para excluir individuos de segundo grau o parametro é o que eu uso abaixo
 
-plink2 --bfile aula_semXY --king-cutoff 0.0884 --out indiv_king
+plink2 --bfile arq_semhet --king-cutoff 0.0884 --out indiv_king
 
 #deixar apenas os indivíduos sem compartilhamento genético
 plink2 --bfile arq_semhet --keep ind_king.king.cutoff.in.id --make-bed --out arq_QC_king
